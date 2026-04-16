@@ -1198,10 +1198,27 @@ const createYTMView = (): void => {
   }, 30 * 1000);
 };
 
+// Returns true if the rectangle overlaps any connected display's work area by
+// at least MIN_VISIBLE_PX on both axes — enough for the user to grab and drag
+// the window. Used to discard saved bounds that point at a monitor that is no
+// longer connected (e.g. laptop undocked while the app was closed).
+const boundsAreVisible = (bounds: Electron.Rectangle): boolean => {
+  const MIN_VISIBLE_PX = 100;
+  return screen.getAllDisplays().some(display => {
+    const a = display.workArea;
+    const xOverlap = Math.max(0, Math.min(bounds.x + bounds.width, a.x + a.width) - Math.max(bounds.x, a.x));
+    const yOverlap = Math.max(0, Math.min(bounds.y + bounds.height, a.y + a.height) - Math.max(bounds.y, a.y));
+    return xOverlap >= MIN_VISIBLE_PX && yOverlap >= MIN_VISIBLE_PX;
+  });
+};
+
 const createMainWindow = (): void => {
   // Create the browser window.
   const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
-  const windowBounds = store.get("state").windowBounds;
+  const savedBounds = store.get("state").windowBounds;
+  // Drop saved bounds that no longer intersect any connected display; fixes #1282
+  // where the window reappears off-screen after a monitor disconnect or resolution change.
+  const windowBounds = savedBounds && boundsAreVisible(savedBounds) ? savedBounds : null;
   mainWindow = new BrowserWindow({
     width: windowBounds?.width ?? 1280 / scaleFactor,
     height: windowBounds?.height ?? 720 / scaleFactor,
@@ -1295,7 +1312,25 @@ const createMainWindow = (): void => {
     store.set("state.windowMaximized", mainWindow.isMaximized());
   });
 
+  // If a display is removed or reconfigured while the app is running and the
+  // window ends up with no visible surface on any remaining display, recenter
+  // it on the primary display so it stays reachable.
+  const rescueMainWindowIfOffscreen = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const bounds = mainWindow.getBounds();
+    if (boundsAreVisible(bounds)) return;
+    const primary = screen.getPrimaryDisplay().workArea;
+    mainWindow.setPosition(
+      Math.round(primary.x + (primary.width - bounds.width) / 2),
+      Math.round(primary.y + (primary.height - bounds.height) / 2)
+    );
+  };
+  screen.on("display-removed", rescueMainWindowIfOffscreen);
+  screen.on("display-metrics-changed", rescueMainWindowIfOffscreen);
+
   mainWindow.once("closed", () => {
+    screen.off("display-removed", rescueMainWindowIfOffscreen);
+    screen.off("display-metrics-changed", rescueMainWindowIfOffscreen);
     mainWindow = null;
   });
 
