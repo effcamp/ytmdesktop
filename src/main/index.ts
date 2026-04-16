@@ -1216,14 +1216,15 @@ const createMainWindow = (): void => {
   // Create the browser window.
   const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
   const savedBounds = store.get("state").windowBounds;
-  // Drop saved bounds that no longer intersect any connected display; fixes #1282
+  // Drop saved position if it no longer intersects any connected display; fixes #1282
   // where the window reappears off-screen after a monitor disconnect or resolution change.
-  const windowBounds = savedBounds && boundsAreVisible(savedBounds) ? savedBounds : null;
+  // The saved size is always preserved — only x/y are reset so Electron centers on primary.
+  const savedPositionIsVisible = savedBounds !== null && boundsAreVisible(savedBounds);
   mainWindow = new BrowserWindow({
-    width: windowBounds?.width ?? 1280 / scaleFactor,
-    height: windowBounds?.height ?? 720 / scaleFactor,
-    x: windowBounds?.x,
-    y: windowBounds?.y,
+    width: savedBounds?.width ?? 1280 / scaleFactor,
+    height: savedBounds?.height ?? 720 / scaleFactor,
+    x: savedPositionIsVisible ? savedBounds.x : undefined,
+    y: savedPositionIsVisible ? savedBounds.y : undefined,
     minWidth: 156,
     minHeight: 180,
     frame: false,
@@ -1244,8 +1245,8 @@ const createMainWindow = (): void => {
   });
   const windowMaximized = store.get("state").windowMaximized;
   // Even though bounds are set when creating the main window we set the bounds again to fix scaling issues. This is classified as an upstream chromium bug.
-  if (windowBounds) {
-    mainWindow.setBounds(windowBounds);
+  if (savedPositionIsVisible) {
+    mainWindow.setBounds(savedBounds);
   }
   if (windowMaximized) {
     mainWindow.maximize();
